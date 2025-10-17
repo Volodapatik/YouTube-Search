@@ -74,6 +74,40 @@
             background: #404040;
         }
 
+        .filters-section {
+            padding: 0 20px 15px 20px;
+            background: #202020;
+            border-top: 1px solid #303030;
+        }
+
+        .filters-container {
+            max-width: 500px;
+            margin: 0 auto;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 10px 16px;
+            background: #303030;
+            color: #ffffff;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .filter-btn:hover {
+            background: #404040;
+        }
+
+        .filter-btn.active {
+            background: #ff4444;
+            color: white;
+        }
+
         .results-container {
             padding: 0 15px;
             padding-bottom: 20px;
@@ -245,6 +279,10 @@
             .video-thumbnail {
                 height: 180px;
             }
+
+            .filters-container {
+                justify-content: center;
+            }
         }
     </style>
 </head>
@@ -268,6 +306,15 @@
         </div>
     </section>
 
+    <section class="filters-section">
+        <div class="filters-container">
+            <button class="filter-btn" onclick="setFilter('all')" id="filterAll">Все</button>
+            <button class="filter-btn" onclick="setFilter('short')" id="filterShort">Короткие (< 4 мин)</button>
+            <button class="filter-btn" onclick="setFilter('medium')" id="filterMedium">Средние (4-20 мин)</button>
+            <button class="filter-btn" onclick="setFilter('long')" id="filterLong">Длинные (> 20 мин)</button>
+        </div>
+    </section>
+
     <main class="results-container" id="resultsContainer">
         <div class="empty-state">
             <div class="empty-icon">🎵</div>
@@ -278,6 +325,56 @@
     <script>
         const YOUTUBE_API_KEY = 'AIzaSyCSeZzG1u99LqcTpm78P3-XSg4poOQEVCo';
         let currentSearchQuery = '';
+        let currentVideos = [];
+        let currentFilter = 'all';
+
+        // Установка фильтра
+        function setFilter(filter) {
+            currentFilter = filter;
+            
+            // Обновляем активную кнопку
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`filter${filter.charAt(0).toUpperCase() + filter.slice(1)}`).classList.add('active');
+            
+            // Применяем фильтр к текущим результатам
+            if (currentVideos.length > 0) {
+                applyFilter();
+            }
+        }
+
+        // Применение фильтра
+        function applyFilter() {
+            const filteredVideos = currentVideos.filter(video => {
+                const durationInSeconds = parseDurationToSeconds(video.contentDetails.duration);
+                
+                switch (currentFilter) {
+                    case 'short':
+                        return durationInSeconds < 240; // Меньше 4 минут
+                    case 'medium':
+                        return durationInSeconds >= 240 && durationInSeconds <= 1200; // 4-20 минут
+                    case 'long':
+                        return durationInSeconds > 1200; // Больше 20 минут
+                    default:
+                        return true; // Все видео
+                }
+            });
+            
+            displayResults(filteredVideos);
+        }
+
+        // Преобразование длительности в секунды
+        function parseDurationToSeconds(duration) {
+            const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
+            let seconds = 0;
+            
+            if (match[1]) seconds += parseInt(match[1]) * 3600;
+            if (match[2]) seconds += parseInt(match[2]) * 60;
+            if (match[3]) seconds += parseInt(match[3]);
+            
+            return seconds;
+        }
 
         // Поиск видео
         async function searchVideos() {
@@ -295,7 +392,7 @@
             try {
                 // Первый запрос - поиск видео
                 const searchResponse = await fetch(
-                    `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=15&q=${encodeURIComponent(query)}&type=video&key=${YOUTUBE_API_KEY}`
+                    `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=25&q=${encodeURIComponent(query)}&type=video&key=${YOUTUBE_API_KEY}`
                 );
                 
                 if (!searchResponse.ok) {
@@ -316,7 +413,8 @@
                     }
 
                     const videosData = await videosResponse.json();
-                    displayResults(videosData.items);
+                    currentVideos = videosData.items;
+                    applyFilter();
                 } else {
                     showEmptyState('Ничего не найдено');
                 }
@@ -335,9 +433,9 @@
             const seconds = (match[3] || '').replace('S', '');
             
             if (hours) {
-                return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}`;
+                return `${hours}:${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}`;
             } else {
-                return `${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}`;
+                return `${minutes}:${seconds.padStart(2, '0')}`;
             }
         }
 
@@ -359,6 +457,11 @@
         // Показ результатов
         function displayResults(videos) {
             const resultsContainer = document.getElementById('resultsContainer');
+            
+            if (videos.length === 0) {
+                showEmptyState('По выбранному фильтру видео не найдено');
+                return;
+            }
             
             resultsContainer.innerHTML = videos.map(video => {
                 const duration = formatDuration(video.contentDetails.duration);
@@ -462,6 +565,9 @@
 
         // Фокус на поле ввода при загрузке
         document.getElementById('searchInput').focus();
+
+        // Активируем фильтр "Все" по умолчанию
+        setFilter('all');
     </script>
 </body>
 </html>
