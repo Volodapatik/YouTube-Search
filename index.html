@@ -108,6 +108,60 @@
             color: white;
         }
 
+        .language-toggle {
+            max-width: 500px;
+            margin: 15px auto 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #303030;
+            transition: .4s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background-color: #ff4444;
+        }
+
+        input:checked + .toggle-slider:before {
+            transform: translateX(26px);
+        }
+
         .results-container {
             padding: 0 15px;
             padding-bottom: 20px;
@@ -205,6 +259,40 @@
 
         .copy-btn:active {
             background: #cc3333;
+        }
+
+        .load-more-container {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .load-more-btn {
+            background: #ff4444;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 30px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .load-more-btn:hover {
+            background: #ff6666;
+        }
+
+        .load-more-btn:disabled {
+            background: #303030;
+            color: #888;
+            cursor: not-allowed;
+        }
+
+        .results-info {
+            text-align: center;
+            padding: 15px;
+            color: #aaaaaa;
+            font-size: 14px;
+            border-bottom: 1px solid #303030;
         }
 
         .loading {
@@ -307,6 +395,14 @@
     </section>
 
     <section class="filters-section">
+        <div class="language-toggle">
+            <span>🌐 Поиск по всем языкам</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="allLanguagesToggle" onchange="toggleAllLanguages()">
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+        
         <div class="filters-container">
             <button class="filter-btn" onclick="setFilter('all')" id="filterAll">Все</button>
             <button class="filter-btn" onclick="setFilter('short')" id="filterShort">Короткие (< 4 мин)</button>
@@ -327,6 +423,18 @@
         let currentSearchQuery = '';
         let currentVideos = [];
         let currentFilter = 'all';
+        let nextPageToken = '';
+        let isAllLanguages = false;
+        let isLoadingMore = false;
+
+        // Переключение поиска по всем языкам
+        function toggleAllLanguages() {
+            isAllLanguages = document.getElementById('allLanguagesToggle').checked;
+            // При изменении настройки перезапускаем поиск
+            if (currentSearchQuery) {
+                searchVideos();
+            }
+        }
 
         // Установка фильтра
         function setFilter(filter) {
@@ -387,40 +495,152 @@
             }
 
             currentSearchQuery = query;
+            nextPageToken = ''; // Сбрасываем токен пагинации для нового поиска
             showLoading();
 
             try {
-                // Первый запрос - поиск видео
-                const searchResponse = await fetch(
-                    `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=25&q=${encodeURIComponent(query)}&type=video&key=${YOUTUBE_API_KEY}`
-                );
-                
-                if (!searchResponse.ok) {
-                    throw new Error('Ошибка YouTube API');
-                }
-
-                const searchData = await searchResponse.json();
-                
-                if (searchData.items && searchData.items.length > 0) {
-                    // Получаем детальную информацию о видео (включая длительность)
-                    const videoIds = searchData.items.map(item => item.id.videoId).join(',');
-                    const videosResponse = await fetch(
-                        `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet,statistics&id=${videoIds}&key=${YOUTUBE_API_KEY}`
-                    );
-                    
-                    if (!videosResponse.ok) {
-                        throw new Error('Ошибка получения деталей видео');
-                    }
-
-                    const videosData = await videosResponse.json();
-                    currentVideos = videosData.items;
-                    applyFilter();
-                } else {
-                    showEmptyState('Ничего не найдено');
-                }
+                await performSearch();
             } catch (error) {
                 showError('Ошибка поиска: ' + error.message);
             }
+        }
+
+        // Выполнение поиска с пагинацией
+        async function performSearch() {
+            let url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=20&q=${encodeURIComponent(currentSearchQuery)}&type=video&key=${YOUTUBE_API_KEY}`;
+            
+            // Добавляем параметр региона, если включен поиск по всем языкам
+            if (isAllLanguages) {
+                url += '&relevanceLanguage=';
+            } else {
+                url += '&relevanceLanguage=ru';
+            }
+            
+            // Добавляем токен пагинации, если он есть
+            if (nextPageToken && !isLoadingMore) {
+                url += `&pageToken=${nextPageToken}`;
+            }
+
+            const searchResponse = await fetch(url);
+            
+            if (!searchResponse.ok) {
+                throw new Error('Ошибка YouTube API');
+            }
+
+            const searchData = await searchResponse.json();
+            
+            if (searchData.items && searchData.items.length > 0) {
+                // Сохраняем токен следующей страницы
+                nextPageToken = searchData.nextPageToken || '';
+                
+                // Получаем детальную информацию о видео
+                const videoIds = searchData.items.map(item => item.id.videoId).join(',');
+                const videosResponse = await fetch(
+                    `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet,statistics&id=${videoIds}&key=${YOUTUBE_API_KEY}`
+                );
+                
+                if (!videosResponse.ok) {
+                    throw new Error('Ошибка получения деталей видео');
+                }
+
+                const videosData = await videosResponse.json();
+                
+                if (isLoadingMore) {
+                    // Добавляем новые видео к существующим
+                    currentVideos = [...currentVideos, ...videosData.items];
+                } else {
+                    // Заменяем текущие видео новыми
+                    currentVideos = videosData.items;
+                }
+                
+                applyFilter();
+                
+                // Показываем информацию о количестве результатов
+                showResultsInfo();
+                
+                // Показываем кнопку "Загрузить еще", если есть еще результаты
+                if (nextPageToken) {
+                    showLoadMoreButton();
+                }
+                
+                isLoadingMore = false;
+            } else {
+                if (isLoadingMore) {
+                    showToast('Больше видео не найдено');
+                    isLoadingMore = false;
+                } else {
+                    showEmptyState('Ничего не найдено');
+                }
+            }
+        }
+
+        // Загрузка дополнительных результатов
+        async function loadMoreVideos() {
+            if (!nextPageToken || isLoadingMore) return;
+            
+            isLoadingMore = true;
+            const loadMoreBtn = document.querySelector('.load-more-btn');
+            if (loadMoreBtn) {
+                loadMoreBtn.disabled = true;
+                loadMoreBtn.textContent = 'Загрузка...';
+            }
+            
+            try {
+                await performSearch();
+            } catch (error) {
+                showError('Ошибка загрузки: ' + error.message);
+                isLoadingMore = false;
+            }
+        }
+
+        // Показ информации о результатах
+        function showResultsInfo() {
+            const filteredCount = currentVideos.filter(video => {
+                const durationInSeconds = parseDurationToSeconds(video.contentDetails.duration);
+                
+                switch (currentFilter) {
+                    case 'short': return durationInSeconds < 240;
+                    case 'medium': return durationInSeconds >= 240 && durationInSeconds <= 1200;
+                    case 'long': return durationInSeconds > 1200;
+                    default: return true;
+                }
+            }).length;
+            
+            const totalCount = currentVideos.length;
+            const languageInfo = isAllLanguages ? '🌐 По всем языкам' : '🇷🇺 На русском';
+            
+            const resultsContainer = document.getElementById('resultsContainer');
+            const existingInfo = document.querySelector('.results-info');
+            if (existingInfo) {
+                existingInfo.remove();
+            }
+            
+            const infoElement = document.createElement('div');
+            infoElement.className = 'results-info';
+            infoElement.innerHTML = `
+                Найдено видео: ${filteredCount} (всего загружено: ${totalCount}) | ${languageInfo}
+                ${isAllLanguages ? '<br><small>🎯 Показываются видео со всего мира</small>' : ''}
+            `;
+            
+            resultsContainer.prepend(infoElement);
+        }
+
+        // Показ кнопки "Загрузить еще"
+        function showLoadMoreButton() {
+            const existingButton = document.querySelector('.load-more-container');
+            if (existingButton) {
+                existingButton.remove();
+            }
+            
+            const loadMoreContainer = document.createElement('div');
+            loadMoreContainer.className = 'load-more-container';
+            loadMoreContainer.innerHTML = `
+                <button class="load-more-btn" onclick="loadMoreVideos()">
+                    📥 Загрузить еще (20 видео)
+                </button>
+            `;
+            
+            document.getElementById('resultsContainer').appendChild(loadMoreContainer);
         }
 
         // Форматирование длительности видео
@@ -463,7 +683,17 @@
                 return;
             }
             
-            resultsContainer.innerHTML = videos.map(video => {
+            // Удаляем старые результаты, но сохраняем информацию и кнопку загрузки
+            const infoElement = document.querySelector('.results-info');
+            const loadMoreContainer = document.querySelector('.load-more-container');
+            
+            resultsContainer.innerHTML = '';
+            
+            if (infoElement) {
+                resultsContainer.appendChild(infoElement);
+            }
+            
+            resultsContainer.innerHTML += videos.map(video => {
                 const duration = formatDuration(video.contentDetails.duration);
                 const publishedDate = formatDate(video.snippet.publishedAt);
                 const viewCount = video.statistics?.viewCount ? 
@@ -497,6 +727,10 @@
                 </div>
                 `;
             }).join('');
+            
+            if (loadMoreContainer && nextPageToken) {
+                resultsContainer.appendChild(loadMoreContainer);
+            }
         }
 
         // Копирование ID видео
@@ -525,7 +759,7 @@
             document.getElementById('resultsContainer').innerHTML = `
                 <div class="loading">
                     <div class="loading-spinner"></div>
-                    <p>Ищем "${currentSearchQuery}"...</p>
+                    <p>Ищем "${currentSearchQuery}"${isAllLanguages ? ' 🌐 по всем языкам' : ''}...</p>
                 </div>
             `;
         }
