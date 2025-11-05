@@ -591,10 +591,16 @@
             setInterval(updateDateTime, 1000);
             setFilter('all');
             setDateFilter('all');
-            loadSearchHistory();
             
             // Автофокус на поле ввода
             document.getElementById('searchInput').focus();
+            
+            // Поиск по Enter
+            document.getElementById('searchInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchVideos();
+                }
+            });
         }
 
         // Обновление даты и времени
@@ -687,6 +693,18 @@
             }
         }
 
+        // Преобразование длительности в секунды
+        function parseDurationToSeconds(duration) {
+            const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
+            let seconds = 0;
+            
+            if (match[1]) seconds += parseInt(match[1]) * 3600;
+            if (match[2]) seconds += parseInt(match[2]) * 60;
+            if (match[3]) seconds += parseInt(match[3]);
+            
+            return seconds;
+        }
+
         // Применение фильтров
         function applyFilter() {
             const filteredVideos = currentVideos.filter(video => {
@@ -708,7 +726,7 @@
                         durationMatch = durationInSeconds > 1200;
                         break;
                     case 'trending':
-                        durationMatch = views > 100000; // Видео с большим количеством просмотров
+                        durationMatch = views > 100000;
                         break;
                 }
 
@@ -741,7 +759,6 @@
             nextPageToken = '';
             searchCount++;
             lastSearchTime = new Date();
-            saveSearchHistory();
             showLoading();
 
             try {
@@ -849,47 +866,109 @@
             }
         }
 
-        // История поиска
-        function saveSearchHistory() {
-            const history = JSON.parse(localStorage.getItem('ytSearchHistory') || '[]');
-            const newEntry = {
-                query: currentSearchQuery,
-                timestamp: new Date().toISOString(),
-                results: currentVideos.length
-            };
+        // Форматирование длительности видео
+        function formatDuration(duration) {
+            const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
+            if (!match) return '--:--';
             
-            // Удаляем дубликаты
-            const filteredHistory = history.filter(item => item.query !== currentSearchQuery);
-            filteredHistory.unshift(newEntry);
+            const hours = (match[1] || '').replace('H', '');
+            const minutes = (match[2] || '').replace('M', '');
+            const seconds = (match[3] || '').replace('S', '');
             
-            // Сохраняем только последние 10 запросов
-            localStorage.setItem('ytSearchHistory', filteredHistory.slice(0, 10).toString());
+            if (hours) {
+                return `${hours}:${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}`;
+            } else {
+                return `${minutes}:${seconds.padStart(2, '0')}`;
+            }
         }
 
-        function loadSearchHistory() {
-            // Можно добавить отображение истории поиска
+        // Форматирование даты
+        function formatDate(publishedAt) {
+            const date = new Date(publishedAt);
+            const now = new Date();
+            const diffTime = Math.abs(now - date);
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (diffDays === 0) return 'Сегодня';
+            if (diffDays === 1) return 'Вчера';
+            if (diffDays < 7) return `${diffDays} дней назад`;
+            if (diffDays < 30) return `${Math.floor(diffDays / 7)} недель назад`;
+            if (diffDays < 365) return `${Math.floor(diffDays / 30)} месяцев назад`;
+            return `${Math.floor(diffDays / 365)} лет назад`;
         }
 
-        // Остальные функции остаются такими же (formatDuration, formatDate, displayResults и т.д.)
-        // ... (включи все предыдущие функции которые были в оригинальном коде)
-
-        // Добавляем проверку на "новое" и "трендовое" видео
+        // Проверка на "новое" видео
         function isNewVideo(publishedAt) {
             const publishDate = new Date(publishedAt);
             const now = new Date();
             const diffDays = (now - publishDate) / (1000 * 60 * 60 * 24);
-            return diffDays < 7; // Новое если опубликовано менее недели назад
+            return diffDays < 7;
         }
 
+        // Проверка на "трендовое" видео
         function isTrendingVideo(views, publishedAt) {
             const publishDate = new Date(publishedAt);
             const now = new Date();
             const diffDays = (now - publishDate) / (1000 * 60 * 60 * 24);
             const viewsPerDay = views / Math.max(diffDays, 1);
-            return viewsPerDay > 1000; // Трендовое если более 1000 просмотров в день
+            return viewsPerDay > 1000;
         }
 
-        // Показ результатов с улучшенными бейджами
+        // Показ информации о результатах
+        function showResultsInfo() {
+            const filteredCount = currentVideos.filter(video => {
+                const durationInSeconds = parseDurationToSeconds(video.contentDetails.duration);
+                const publishedAt = new Date(video.snippet.publishedAt);
+                const views = parseInt(video.statistics?.viewCount || 0);
+                
+                let durationMatch = true;
+                switch (currentFilter) {
+                    case 'short': return durationInSeconds < 240;
+                    case 'medium': return durationInSeconds >= 240 && durationInSeconds <= 1200;
+                    case 'long': return durationInSeconds > 1200;
+                    case 'trending': return views > 100000;
+                    default: return true;
+                }
+            }).length;
+            
+            const totalCount = currentVideos.length;
+            const languageInfo = isAllLanguages ? '🌐 По всем языкам' : '🇷🇺 На русском';
+            
+            const resultsContainer = document.getElementById('resultsContainer');
+            const existingInfo = document.querySelector('.results-info');
+            if (existingInfo) {
+                existingInfo.remove();
+            }
+            
+            const infoElement = document.createElement('div');
+            infoElement.className = 'results-info';
+            infoElement.innerHTML = `
+                Найдено видео: ${filteredCount} (всего загружено: ${totalCount}) | ${languageInfo}
+                ${isAllLanguages ? '<br><small>🎯 Показываются видео со всего мира</small>' : ''}
+            `;
+            
+            resultsContainer.prepend(infoElement);
+        }
+
+        // Показ кнопки "Загрузить еще"
+        function showLoadMoreButton() {
+            const existingButton = document.querySelector('.load-more-container');
+            if (existingButton) {
+                existingButton.remove();
+            }
+            
+            const loadMoreContainer = document.createElement('div');
+            loadMoreContainer.className = 'load-more-container';
+            loadMoreContainer.innerHTML = `
+                <button class="load-more-btn" onclick="loadMoreVideos()">
+                    📥 Загрузить еще (20 видео)
+                </button>
+            `;
+            
+            document.getElementById('resultsContainer').appendChild(loadMoreContainer);
+        }
+
+        // Показ результатов
         function displayResults(videos) {
             const resultsContainer = document.getElementById('resultsContainer');
             
@@ -926,7 +1005,7 @@
                         >
                         <div class="video-duration">${duration}</div>
                         ${isNew ? '<div class="new-badge">NEW</div>' : ''}
-                        ${isTrending ? '<div class="trending-badge">TRENDING</div>' : ''}
+                        ${isTrending && !isNew ? '<div class="trending-badge">TRENDING</div>' : ''}
                     </div>
                     <div class="video-info">
                         <div class="video-title">${video.snippet.title}</div>
@@ -949,6 +1028,63 @@
             if (loadMoreContainer && nextPageToken) {
                 resultsContainer.appendChild(loadMoreContainer);
             }
+        }
+
+        // Копирование ID видео
+        function copyVideoId(videoId) {
+            copyToClipboard(videoId);
+            showToast(`✅ ID скопирован: ${videoId}`);
+        }
+
+        // Копирование в буфер обмена
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch (err) {
+                // Fallback для старых браузеров
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+            }
+        }
+
+        // Вспомогательные функции UI
+        function showLoading() {
+            document.getElementById('resultsContainer').innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Ищем "${currentSearchQuery}"${isAllLanguages ? ' 🌐 по всем языкам' : ''}...</p>
+                </div>
+            `;
+        }
+
+        function showEmptyState(message) {
+            document.getElementById('resultsContainer').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">🔍</div>
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+
+        function showError(message) {
+            document.getElementById('resultsContainer').innerHTML = `
+                <div class="error">❌ ${message}</div>
+            `;
+        }
+
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                document.body.removeChild(toast);
+            }, 2000);
         }
 
         // Инициализация при загрузке
