@@ -476,6 +476,31 @@
             font-weight: 600;
         }
 
+        .random-search-section {
+            max-width: 500px;
+            margin: 15px auto 0 auto;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .random-search-btn {
+            padding: 10px 15px;
+            background: #303030;
+            color: #ffffff;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .random-search-btn:hover {
+            background: #404040;
+            transform: translateY(-1px);
+        }
+
         @media (max-width: 480px) {
             .search-container {
                 flex-direction: column;
@@ -516,12 +541,20 @@
                 type="text" 
                 class="search-input" 
                 id="searchInput"
-                placeholder="Введите запрос: техно, фонк, джаз, lo-fi..."
+                placeholder="Введите запрос: техно, фонк, драм-энд-бейс, lo-fi..."
                 autocomplete="off"
             >
             <button class="search-btn" onclick="searchVideos()">
                 🔍 Найти
             </button>
+        </div>
+
+        <div class="random-search-section">
+            <button class="random-search-btn" onclick="searchRandom('drum and bass')">🎵 Drum & Bass</button>
+            <button class="random-search-btn" onclick="searchRandom('techno mix')">⚡ Techno</button>
+            <button class="random-search-btn" onclick="searchRandom('phonk')">🔥 Phonk</button>
+            <button class="random-search-btn" onclick="searchRandom('lofi hip hop')">🎧 Lo-Fi</button>
+            <button class="random-search-btn" onclick="searchRandom('jazz')">🎷 Jazz</button>
         </div>
 
         <div class="auto-refresh-section">
@@ -543,6 +576,7 @@
             <button class="filter-btn" onclick="setFilter('medium')" id="filterMedium">📊 Средние (4-20 мин)</button>
             <button class="filter-btn" onclick="setFilter('long')" id="filterLong">🎯 Длинные (> 20 мин)</button>
             <button class="filter-btn" onclick="setFilter('trending')" id="filterTrending">🔥 Тренды</button>
+            <button class="filter-btn" onclick="setFilter('live')" id="filterLive">🔴 LIVE</button>
         </div>
 
         <div class="date-filters">
@@ -567,7 +601,7 @@
             <div class="empty-icon">🎵</div>
             <p>Введите запрос для поиска YouTube видео</p>
             <p style="margin-top: 10px; font-size: 12px; color: #666;">
-                Попробуйте: techno, jazz, lofi, phonk, classical, ambient
+                Попробуйте: drum and bass, techno, phonk, lofi, jazz, house
             </p>
         </div>
     </main>
@@ -584,6 +618,15 @@
         let autoRefreshInterval = null;
         let searchCount = 0;
         let lastSearchTime = null;
+
+        // Случайные поисковые запросы для разнообразия
+        const randomMusicQueries = [
+            'drum and bass mix 2024', 'techno party mix', 'phonk drift', 'lofi study beats',
+            'jazz relaxation', 'deep house session', 'trance classics', 'hardstyle workout',
+            'ambient music', 'chillhop radio', 'reggae vibes', 'hip hop classics',
+            'electronic dance music', 'synthwave retro', 'classical music', 'rock anthems',
+            'metal workout', 'pop hits 2024', 'reggaeton 2024', 'tropical house'
+        ];
 
         // Инициализация
         function init() {
@@ -611,6 +654,12 @@
             document.getElementById('currentTime').textContent = time;
             document.getElementById('currentDate').textContent = date;
             document.getElementById('searchCount').textContent = `Поисков: ${searchCount}`;
+        }
+
+        // Случайный поиск
+        function searchRandom(query) {
+            document.getElementById('searchInput').value = query;
+            searchVideos();
         }
 
         // Автообновление
@@ -712,6 +761,7 @@
                 const publishedAt = new Date(video.snippet.publishedAt);
                 const now = new Date();
                 const views = parseInt(video.statistics?.viewCount || 0);
+                const isLive = video.snippet.liveBroadcastContent === 'live';
                 
                 // Фильтр по длительности
                 let durationMatch = true;
@@ -727,6 +777,9 @@
                         break;
                     case 'trending':
                         durationMatch = views > 100000;
+                        break;
+                    case 'live':
+                        durationMatch = isLive;
                         break;
                 }
 
@@ -770,7 +823,7 @@
 
         // Выполнение поиска
         async function performSearch(isAutoRefresh = false) {
-            let url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=20&q=${encodeURIComponent(currentSearchQuery)}&type=video&key=${YOUTUBE_API_KEY}`;
+            let url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=25&q=${encodeURIComponent(currentSearchQuery)}&type=video&key=${YOUTUBE_API_KEY}`;
             
             if (isAllLanguages) {
                 url += '&relevanceLanguage=';
@@ -793,6 +846,7 @@
                 url += '&order=relevance';
             }
             
+            // Добавляем токен пагинации если загружаем еще
             if (nextPageToken && !isLoadingMore) {
                 url += `&pageToken=${nextPageToken}`;
             }
@@ -830,6 +884,8 @@
                 
                 if (nextPageToken) {
                     showLoadMoreButton();
+                } else {
+                    hideLoadMoreButton();
                 }
                 
                 isLoadingMore = false;
@@ -841,6 +897,7 @@
                 if (isLoadingMore) {
                     showToast('Больше видео не найдено');
                     isLoadingMore = false;
+                    hideLoadMoreButton();
                 } else {
                     showEmptyState('Ничего не найдено');
                 }
@@ -863,6 +920,10 @@
             } catch (error) {
                 showError('Ошибка загрузки: ' + error.message);
                 isLoadingMore = false;
+                if (loadMoreBtn) {
+                    loadMoreBtn.disabled = false;
+                    loadMoreBtn.textContent = '📥 Загрузить еще (25 видео)';
+                }
             }
         }
 
@@ -920,6 +981,7 @@
                 const durationInSeconds = parseDurationToSeconds(video.contentDetails.duration);
                 const publishedAt = new Date(video.snippet.publishedAt);
                 const views = parseInt(video.statistics?.viewCount || 0);
+                const isLive = video.snippet.liveBroadcastContent === 'live';
                 
                 let durationMatch = true;
                 switch (currentFilter) {
@@ -927,6 +989,7 @@
                     case 'medium': return durationInSeconds >= 240 && durationInSeconds <= 1200;
                     case 'long': return durationInSeconds > 1200;
                     case 'trending': return views > 100000;
+                    case 'live': return isLive;
                     default: return true;
                 }
             }).length;
@@ -945,6 +1008,7 @@
             infoElement.innerHTML = `
                 Найдено видео: ${filteredCount} (всего загружено: ${totalCount}) | ${languageInfo}
                 ${isAllLanguages ? '<br><small>🎯 Показываются видео со всего мира</small>' : ''}
+                ${nextPageToken ? '<br><small>📥 Есть еще видео - нажмите "Загрузить еще"</small>' : ''}
             `;
             
             resultsContainer.prepend(infoElement);
@@ -961,11 +1025,19 @@
             loadMoreContainer.className = 'load-more-container';
             loadMoreContainer.innerHTML = `
                 <button class="load-more-btn" onclick="loadMoreVideos()">
-                    📥 Загрузить еще (20 видео)
+                    📥 Загрузить еще (25 видео)
                 </button>
             `;
             
             document.getElementById('resultsContainer').appendChild(loadMoreContainer);
+        }
+
+        // Скрытие кнопки "Загрузить еще"
+        function hideLoadMoreButton() {
+            const existingButton = document.querySelector('.load-more-container');
+            if (existingButton) {
+                existingButton.remove();
+            }
         }
 
         // Показ результатов
@@ -993,6 +1065,7 @@
                     parseInt(video.statistics.viewCount).toLocaleString('ru-RU') : '0';
                 const isNew = isNewVideo(video.snippet.publishedAt);
                 const isTrending = isTrendingVideo(parseInt(video.statistics?.viewCount || 0), video.snippet.publishedAt);
+                const isLive = video.snippet.liveBroadcastContent === 'live';
                 
                 return `
                 <div class="video-card">
@@ -1003,9 +1076,9 @@
                             alt="${video.snippet.title}"
                             loading="lazy"
                         >
-                        <div class="video-duration">${duration}</div>
+                        <div class="video-duration">${isLive ? '🔴 LIVE' : duration}</div>
                         ${isNew ? '<div class="new-badge">NEW</div>' : ''}
-                        ${isTrending && !isNew ? '<div class="trending-badge">TRENDING</div>' : ''}
+                        ${isTrending && !isNew && !isLive ? '<div class="trending-badge">TRENDING</div>' : ''}
                     </div>
                     <div class="video-info">
                         <div class="video-title">${video.snippet.title}</div>
