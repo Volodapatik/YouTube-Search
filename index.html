@@ -244,6 +244,8 @@
         .results-container {
             padding: 0 15px;
             padding-bottom: 20px;
+            position: relative;
+            min-height: 300px;
         }
 
         .video-card {
@@ -352,33 +354,30 @@
             background: #cc3333;
         }
 
-        .load-more-container {
+        .loading-more {
             text-align: center;
-            padding: 20px;
+            padding: 30px 20px;
+            color: #aaaaaa;
+            display: none;
         }
 
-        .load-more-btn {
-            background: #ff4444;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 30px;
-            font-size: 16px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-weight: 600;
+        .loading-more.active {
+            display: block;
         }
 
-        .load-more-btn:hover {
-            background: #ff6666;
-            transform: translateY(-2px);
+        .loading-more-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #303030;
+            border-top: 4px solid #ff4444;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
         }
 
-        .load-more-btn:disabled {
-            background: #303030;
-            color: #888;
-            cursor: not-allowed;
-            transform: none;
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .results-info {
@@ -405,11 +404,6 @@
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 20px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
 
         .error {
@@ -499,6 +493,18 @@
         .random-search-btn:hover {
             background: #404040;
             transform: translateY(-1px);
+        }
+
+        .end-of-results {
+            text-align: center;
+            padding: 30px 20px;
+            color: #666;
+            font-size: 14px;
+            display: none;
+        }
+
+        .end-of-results.active {
+            display: block;
         }
 
         @media (max-width: 480px) {
@@ -618,6 +624,7 @@
         let autoRefreshInterval = null;
         let searchCount = 0;
         let lastSearchTime = null;
+        let isEndOfResults = false;
 
         // Случайные поисковые запросы для разнообразия
         const randomMusicQueries = [
@@ -644,6 +651,31 @@
                     searchVideos();
                 }
             });
+
+            // Наблюдатель для бесконечной ленты
+            setupInfiniteScrollObserver();
+        }
+
+        // Настройка наблюдателя для бесконечной прокрутки
+        function setupInfiniteScrollObserver() {
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && !isLoadingMore && nextPageToken && !isEndOfResults && currentSearchQuery) {
+                        loadMoreVideos();
+                    }
+                });
+            }, {
+                root: null,
+                rootMargin: '100px',
+                threshold: 0.1
+            });
+
+            // Создаем элемент-триггер для наблюдателя
+            const loadTrigger = document.createElement('div');
+            loadTrigger.id = 'loadTrigger';
+            loadTrigger.style.height = '10px';
+            document.body.appendChild(loadTrigger);
+            observer.observe(loadTrigger);
         }
 
         // Обновление даты и времени
@@ -664,19 +696,16 @@
 
         // Автообновление
         function setAutoRefresh(seconds) {
-            // Сбрасываем предыдущий интервал
             if (autoRefreshInterval) {
                 clearInterval(autoRefreshInterval);
                 autoRefreshInterval = null;
             }
 
-            // Обновляем активные кнопки
             document.querySelectorAll('.interval-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
             event.target.classList.add('active');
 
-            // Устанавливаем новый интервал
             if (seconds > 0 && currentSearchQuery) {
                 autoRefreshInterval = setInterval(() => {
                     if (currentSearchQuery) {
@@ -691,13 +720,11 @@
         function setDateFilter(filter) {
             currentDateFilter = filter;
             
-            // Обновляем активную кнопку
             document.querySelectorAll('.date-filter-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
             document.getElementById(`date${filter.charAt(0).toUpperCase() + filter.slice(1)}`).classList.add('active');
             
-            // Применяем фильтр
             if (currentVideos.length > 0) {
                 applyFilter();
             }
@@ -763,7 +790,6 @@
                 const views = parseInt(video.statistics?.viewCount || 0);
                 const isLive = video.snippet.liveBroadcastContent === 'live';
                 
-                // Фильтр по длительности
                 let durationMatch = true;
                 switch (currentFilter) {
                     case 'short':
@@ -783,7 +809,6 @@
                         break;
                 }
 
-                // Фильтр по дате
                 let dateMatch = true;
                 if (currentDateFilter !== 'all') {
                     const filterDate = getDateFilterRange();
@@ -812,6 +837,7 @@
             nextPageToken = '';
             searchCount++;
             lastSearchTime = new Date();
+            isEndOfResults = false;
             showLoading();
 
             try {
@@ -831,7 +857,6 @@
                 url += '&relevanceLanguage=ru';
             }
             
-            // Добавляем фильтр по дате
             if (currentDateFilter !== 'all') {
                 const publishedAfter = getDateFilterRange();
                 if (publishedAfter) {
@@ -839,15 +864,13 @@
                 }
             }
 
-            // Сортировка для трендов
             if (currentFilter === 'trending') {
                 url += '&order=viewCount';
             } else {
                 url += '&order=relevance';
             }
             
-            // Добавляем токен пагинации если загружаем еще
-            if (nextPageToken && !isLoadingMore) {
+            if (nextPageToken) {
                 url += `&pageToken=${nextPageToken}`;
             }
 
@@ -862,6 +885,12 @@
             if (searchData.items && searchData.items.length > 0) {
                 nextPageToken = searchData.nextPageToken || '';
                 
+                // Если нет следующей страницы - показываем сообщение о конце
+                if (!nextPageToken) {
+                    isEndOfResults = true;
+                    showEndOfResults();
+                }
+                
                 const videoIds = searchData.items.map(item => item.id.videoId).join(',');
                 const videosResponse = await fetch(
                     `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet,statistics&id=${videoIds}&key=${YOUTUBE_API_KEY}`
@@ -875,18 +904,13 @@
                 
                 if (isLoadingMore) {
                     currentVideos = [...currentVideos, ...videosData.items];
+                    hideLoadingMoreIndicator();
                 } else {
                     currentVideos = videosData.items;
                 }
                 
                 applyFilter();
                 showResultsInfo();
-                
-                if (nextPageToken) {
-                    showLoadMoreButton();
-                } else {
-                    hideLoadMoreButton();
-                }
                 
                 isLoadingMore = false;
                 
@@ -895,35 +919,29 @@
                 }
             } else {
                 if (isLoadingMore) {
-                    showToast('Больше видео не найдено');
-                    isLoadingMore = false;
-                    hideLoadMoreButton();
+                    isEndOfResults = true;
+                    showEndOfResults();
+                    hideLoadingMoreIndicator();
                 } else {
                     showEmptyState('Ничего не найдено');
                 }
+                isLoadingMore = false;
             }
         }
 
-        // Загрузка дополнительных результатов
+        // Загрузка дополнительных результатов (бесконечная лента)
         async function loadMoreVideos() {
-            if (!nextPageToken || isLoadingMore) return;
+            if (!nextPageToken || isLoadingMore || isEndOfResults) return;
             
             isLoadingMore = true;
-            const loadMoreBtn = document.querySelector('.load-more-btn');
-            if (loadMoreBtn) {
-                loadMoreBtn.disabled = true;
-                loadMoreBtn.textContent = '⏳ Загрузка...';
-            }
+            showLoadingMoreIndicator();
             
             try {
                 await performSearch();
             } catch (error) {
                 showError('Ошибка загрузки: ' + error.message);
                 isLoadingMore = false;
-                if (loadMoreBtn) {
-                    loadMoreBtn.disabled = false;
-                    loadMoreBtn.textContent = '📥 Загрузить еще (25 видео)';
-                }
+                hideLoadingMoreIndicator();
             }
         }
 
@@ -1008,36 +1026,10 @@
             infoElement.innerHTML = `
                 Найдено видео: ${filteredCount} (всего загружено: ${totalCount}) | ${languageInfo}
                 ${isAllLanguages ? '<br><small>🎯 Показываются видео со всего мира</small>' : ''}
-                ${nextPageToken ? '<br><small>📥 Есть еще видео - нажмите "Загрузить еще"</small>' : ''}
+                ${nextPageToken ? '<br><small>📜 Прокрутите вниз для загрузки больше видео...</small>' : ''}
             `;
             
             resultsContainer.prepend(infoElement);
-        }
-
-        // Показ кнопки "Загрузить еще"
-        function showLoadMoreButton() {
-            const existingButton = document.querySelector('.load-more-container');
-            if (existingButton) {
-                existingButton.remove();
-            }
-            
-            const loadMoreContainer = document.createElement('div');
-            loadMoreContainer.className = 'load-more-container';
-            loadMoreContainer.innerHTML = `
-                <button class="load-more-btn" onclick="loadMoreVideos()">
-                    📥 Загрузить еще (25 видео)
-                </button>
-            `;
-            
-            document.getElementById('resultsContainer').appendChild(loadMoreContainer);
-        }
-
-        // Скрытие кнопки "Загрузить еще"
-        function hideLoadMoreButton() {
-            const existingButton = document.querySelector('.load-more-container');
-            if (existingButton) {
-                existingButton.remove();
-            }
         }
 
         // Показ результатов
@@ -1050,56 +1042,103 @@
             }
             
             const infoElement = document.querySelector('.results-info');
-            const loadMoreContainer = document.querySelector('.load-more-container');
+            const loadingMoreElement = document.querySelector('.loading-more');
+            const endOfResultsElement = document.querySelector('.end-of-results');
             
-            resultsContainer.innerHTML = '';
-            
-            if (infoElement) {
-                resultsContainer.appendChild(infoElement);
-            }
-            
-            resultsContainer.innerHTML += videos.map(video => {
-                const duration = formatDuration(video.contentDetails.duration);
-                const publishedDate = formatDate(video.snippet.publishedAt);
-                const viewCount = video.statistics?.viewCount ? 
-                    parseInt(video.statistics.viewCount).toLocaleString('ru-RU') : '0';
-                const isNew = isNewVideo(video.snippet.publishedAt);
-                const isTrending = isTrendingVideo(parseInt(video.statistics?.viewCount || 0), video.snippet.publishedAt);
-                const isLive = video.snippet.liveBroadcastContent === 'live';
+            if (!isLoadingMore) {
+                resultsContainer.innerHTML = '';
                 
-                return `
-                <div class="video-card">
-                    <div class="video-thumbnail-container">
-                        <img 
-                            src="${video.snippet.thumbnails.medium?.url || video.snippet.thumbnails.default.url}" 
-                            class="video-thumbnail" 
-                            alt="${video.snippet.title}"
-                            loading="lazy"
-                        >
-                        <div class="video-duration">${isLive ? '🔴 LIVE' : duration}</div>
-                        ${isNew ? '<div class="new-badge">NEW</div>' : ''}
-                        ${isTrending && !isNew && !isLive ? '<div class="trending-badge">TRENDING</div>' : ''}
-                    </div>
-                    <div class="video-info">
-                        <div class="video-title">${video.snippet.title}</div>
-                        <div class="video-channel">📺 ${video.snippet.channelTitle}</div>
-                        <div class="video-meta">
-                            <span>👁️ ${viewCount} просмотров</span>
-                            <span>📅 ${publishedDate}</span>
+                if (infoElement) {
+                    resultsContainer.appendChild(infoElement);
+                }
+                
+                resultsContainer.innerHTML += videos.map(video => {
+                    const duration = formatDuration(video.contentDetails.duration);
+                    const publishedDate = formatDate(video.snippet.publishedAt);
+                    const viewCount = video.statistics?.viewCount ? 
+                        parseInt(video.statistics.viewCount).toLocaleString('ru-RU') : '0';
+                    const isNew = isNewVideo(video.snippet.publishedAt);
+                    const isTrending = isTrendingVideo(parseInt(video.statistics?.viewCount || 0), video.snippet.publishedAt);
+                    const isLive = video.snippet.liveBroadcastContent === 'live';
+                    
+                    return `
+                    <div class="video-card">
+                        <div class="video-thumbnail-container">
+                            <img 
+                                src="${video.snippet.thumbnails.medium?.url || video.snippet.thumbnails.default.url}" 
+                                class="video-thumbnail" 
+                                alt="${video.snippet.title}"
+                                loading="lazy"
+                            >
+                            <div class="video-duration">${isLive ? '🔴 LIVE' : duration}</div>
+                            ${isNew ? '<div class="new-badge">NEW</div>' : ''}
+                            ${isTrending && !isNew && !isLive ? '<div class="trending-badge">TRENDING</div>' : ''}
+                        </div>
+                        <div class="video-info">
+                            <div class="video-title">${video.snippet.title}</div>
+                            <div class="video-channel">📺 ${video.snippet.channelTitle}</div>
+                            <div class="video-meta">
+                                <span>👁️ ${viewCount} просмотров</span>
+                                <span>📅 ${publishedDate}</span>
+                            </div>
+                        </div>
+                        <div class="video-id-section">
+                            <span class="video-id">ID: ${video.id}</span>
+                            <button class="copy-btn" onclick="copyVideoId('${video.id}')">
+                                📋 Копировать ID
+                            </button>
                         </div>
                     </div>
-                    <div class="video-id-section">
-                        <span class="video-id">ID: ${video.id}</span>
-                        <button class="copy-btn" onclick="copyVideoId('${video.id}')">
-                            📋 Копировать ID
-                        </button>
+                    `;
+                }).join('');
+                
+                if (loadingMoreElement) {
+                    resultsContainer.appendChild(loadingMoreElement);
+                }
+                
+                if (endOfResultsElement) {
+                    resultsContainer.appendChild(endOfResultsElement);
+                }
+            } else {
+                resultsContainer.innerHTML += videos.slice(-25).map(video => {
+                    const duration = formatDuration(video.contentDetails.duration);
+                    const publishedDate = formatDate(video.snippet.publishedAt);
+                    const viewCount = video.statistics?.viewCount ? 
+                        parseInt(video.statistics.viewCount).toLocaleString('ru-RU') : '0';
+                    const isNew = isNewVideo(video.snippet.publishedAt);
+                    const isTrending = isTrendingVideo(parseInt(video.statistics?.viewCount || 0), video.snippet.publishedAt);
+                    const isLive = video.snippet.liveBroadcastContent === 'live';
+                    
+                    return `
+                    <div class="video-card">
+                        <div class="video-thumbnail-container">
+                            <img 
+                                src="${video.snippet.thumbnails.medium?.url || video.snippet.thumbnails.default.url}" 
+                                class="video-thumbnail" 
+                                alt="${video.snippet.title}"
+                                loading="lazy"
+                            >
+                            <div class="video-duration">${isLive ? '🔴 LIVE' : duration}</div>
+                            ${isNew ? '<div class="new-badge">NEW</div>' : ''}
+                            ${isTrending && !isNew && !isLive ? '<div class="trending-badge">TRENDING</div>' : ''}
+                        </div>
+                        <div class="video-info">
+                            <div class="video-title">${video.snippet.title}</div>
+                            <div class="video-channel">📺 ${video.snippet.channelTitle}</div>
+                            <div class="video-meta">
+                                <span>👁️ ${viewCount} просмотров</span>
+                                <span>📅 ${publishedDate}</span>
+                            </div>
+                        </div>
+                        <div class="video-id-section">
+                            <span class="video-id">ID: ${video.id}</span>
+                            <button class="copy-btn" onclick="copyVideoId('${video.id}')">
+                                📋 Копировать ID
+                            </button>
+                        </div>
                     </div>
-                </div>
-                `;
-            }).join('');
-            
-            if (loadMoreContainer && nextPageToken) {
-                resultsContainer.appendChild(loadMoreContainer);
+                    `;
+                }).join('');
             }
         }
 
@@ -1114,7 +1153,6 @@
             try {
                 await navigator.clipboard.writeText(text);
             } catch (err) {
-                // Fallback для старых браузеров
                 const textArea = document.createElement('textarea');
                 textArea.value = text;
                 document.body.appendChild(textArea);
@@ -1122,6 +1160,46 @@
                 document.execCommand('copy');
                 document.body.removeChild(textArea);
             }
+        }
+
+        // Показать индикатор загрузки дополнительных видео
+        function showLoadingMoreIndicator() {
+            let loadingMoreElement = document.querySelector('.loading-more');
+            if (!loadingMoreElement) {
+                loadingMoreElement = document.createElement('div');
+                loadingMoreElement.className = 'loading-more';
+                loadingMoreElement.innerHTML = `
+                    <div class="loading-more-spinner"></div>
+                    <p>Загружаем еще видео...</p>
+                `;
+                document.getElementById('resultsContainer').appendChild(loadingMoreElement);
+            }
+            loadingMoreElement.classList.add('active');
+        }
+
+        // Скрыть индикатор загрузки
+        function hideLoadingMoreIndicator() {
+            const loadingMoreElement = document.querySelector('.loading-more');
+            if (loadingMoreElement) {
+                loadingMoreElement.classList.remove('active');
+            }
+        }
+
+        // Показать сообщение о конце результатов
+        function showEndOfResults() {
+            let endOfResultsElement = document.querySelector('.end-of-results');
+            if (!endOfResultsElement) {
+                endOfResultsElement = document.createElement('div');
+                endOfResultsElement.className = 'end-of-results';
+                endOfResultsElement.innerHTML = `
+                    <p>🎉 Вы достигли конца результатов!</p>
+                    <p style="font-size: 12px; margin-top: 5px; color: #888;">
+                        Больше видео по запросу "${currentSearchQuery}" не найдено
+                    </p>
+                `;
+                document.getElementById('resultsContainer').appendChild(endOfResultsElement);
+            }
+            endOfResultsElement.classList.add('active');
         }
 
         // Вспомогательные функции UI
