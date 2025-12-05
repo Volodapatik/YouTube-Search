@@ -190,6 +190,7 @@
             margin-bottom: 30px;
             transition: all 0.3s;
             cursor: pointer;
+            position: relative;
         }
 
         .upload-section:hover {
@@ -218,6 +219,34 @@
             color: #666;
             font-size: 12px;
             margin-top: 10px;
+        }
+
+        /* Прогресс бар */
+        .upload-progress {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #333;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #00cc6a);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: #888;
+            text-align: center;
         }
 
         /* Список файлов */
@@ -315,6 +344,12 @@
             background: #ff4444;
         }
 
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
         /* Пустое состояние */
         .empty-state {
             text-align: center;
@@ -359,64 +394,9 @@
             color: white;
         }
 
-        /* Модальное окно */
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            opacity: 0;
-            visibility: hidden;
-            transition: all 0.3s;
-        }
-
-        .modal.active {
-            opacity: 1;
-            visibility: visible;
-        }
-
-        .modal-content {
-            background: #222;
-            border-radius: 15px;
-            padding: 30px;
-            max-width: 500px;
-            width: 90%;
-            border: 1px solid #00ff88;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #333;
-        }
-
-        .modal-title {
-            color: #00ff88;
-            font-size: 20px;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            color: #888;
-            font-size: 24px;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .modal-close:hover {
-            color: #ff4444;
-            transform: rotate(90deg);
+        .toast.warning {
+            background: rgba(255, 193, 7, 0.9);
+            color: #000;
         }
 
         /* Адаптивность */
@@ -537,8 +517,17 @@
                     <strong>Перетащите файлы сюда</strong> или нажмите для выбора
                 </div>
                 <div class="upload-hint">
-                    Поддерживаются любые файлы до 10 МБ каждый
+                    Поддерживаются любые файлы до <span id="maxSizeDisplay">5 ГБ</span> каждый
                 </div>
+                
+                <!-- Прогресс бар для больших файлов -->
+                <div id="uploadProgress" class="upload-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">0% • 0 Б/с • Осталось: --:--</div>
+                </div>
+                
                 <input type="file" id="fileInput" multiple style="display: none;">
             </div>
             
@@ -569,21 +558,13 @@
         </section>
     </div>
 
-    <!-- Модальное окно скачивания -->
-    <div id="downloadModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <div class="modal-title">💾 Скачивание файла</div>
-                <button class="modal-close" onclick="closeModal()">×</button>
-            </div>
-            <div id="modalBody">
-                <!-- Контент модального окна -->
-            </div>
-        </div>
-    </div>
-
     <script>
-        // Админские учетные данные (можно изменить)
+        // Конфигурация размеров файлов
+        const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5 ГБ в байтах
+        const MAX_TOTAL_SIZE = 50 * 1024 * 1024 * 1024; // 50 ГБ общий лимит
+        const CHUNK_SIZE = 4 * 1024 * 1024; // 4 МБ размер чанка для больших файлов
+        
+        // Админские учетные данные
         const ADMIN_EMAIL = "admin@system.local";
         const ADMIN_PASSWORD = "secret123";
         
@@ -591,30 +572,32 @@
         let currentUser = null;
         let syncCode = null;
         let files = [];
-        let currentStorage = null; // 'local' или 'indexed'
-        let db = null; // <-- ВАЖНО: добавляем глобальную переменную для IndexedDB
+        let currentStorage = null;
+        let db = null;
+        let isUploading = false;
+        let uploadProgress = {
+            currentFile: null,
+            totalFiles: 0,
+            currentFileIndex: 0,
+            bytesUploaded: 0,
+            totalBytes: 0,
+            startTime: null,
+            speedHistory: []
+        };
+
+        // Обновляем отображение максимального размера
+        document.getElementById('maxSizeDisplay').textContent = formatFileSize(MAX_FILE_SIZE);
 
         // Инициализация при загрузке
         document.addEventListener('DOMContentLoaded', function() {
-            // Проверяем, сохранен ли вход
             checkSavedLogin();
-            
-            // Настройка drag & drop
             setupDragAndDrop();
-            
-            // Прячем основной раздел
             document.getElementById('mainSection').style.display = 'none';
-            
-            // Фокус на поле email
             document.getElementById('adminEmail').focus();
-            
-            // Проверяем параметры URL
             checkUrlParams();
             
-            console.log('Система инициализирована. Используемые данные:');
-            console.log('Email:', document.getElementById('adminEmail').value);
-            console.log('Password:', '********');
-            console.log('Sync Code:', document.getElementById('syncCode').value);
+            console.log('Система инициализирована. Максимальный размер файла:', formatFileSize(MAX_FILE_SIZE));
+            console.log('Максимальный общий размер:', formatFileSize(MAX_TOTAL_SIZE));
         });
         
         // Проверка сохраненного входа
@@ -626,26 +609,19 @@
                     if (loginData.email && loginData.syncCode) {
                         document.getElementById('adminEmail').value = loginData.email;
                         document.getElementById('syncCode').value = loginData.syncCode;
-                        console.log('Загружены сохраненные данные входа');
                     }
                 } catch (e) {
                     console.log('Ошибка загрузки сохраненного входа:', e);
                 }
-            } else {
-                console.log('Сохраненных данных входа не найдено');
             }
         }
         
         // Вход в систему
         function login() {
-            console.log('Попытка входа...');
             const email = document.getElementById('adminEmail').value.trim();
             const password = document.getElementById('adminPassword').value.trim();
             const code = document.getElementById('syncCode').value.trim();
             
-            console.log('Введенные данные:', { email, password: '***', code });
-            
-            // Проверка учетных данных
             if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
                 if (!code) {
                     showToast('⚠️ Введите код синхронизации или создайте новый', 'error');
@@ -655,35 +631,27 @@
                 currentUser = email;
                 syncCode = code;
                 
-                console.log('Вход успешен! Пользователь:', currentUser, 'Код синхронизации:', syncCode);
-                
-                // Сохраняем данные входа
                 localStorage.setItem('admin_login', JSON.stringify({
                     email: email,
                     syncCode: code,
                     timestamp: new Date().toISOString()
                 }));
                 
-                // Показываем основной интерфейс
                 document.getElementById('loginSection').style.display = 'none';
                 document.getElementById('mainSection').style.display = 'block';
                 document.getElementById('userEmail').textContent = email;
                 document.getElementById('syncCodeDisplay').textContent = code.substring(0, 8) + '...';
                 
-                // Инициализируем хранилище
                 initStorage().then(() => {
                     showToast('✅ Вход выполнен успешно!');
-                    // Загружаем файлы
                     loadFiles();
                 }).catch(error => {
                     console.error('Ошибка инициализации хранилища:', error);
                     showToast('⚠️ Используется упрощенный режим хранения', 'error');
-                    // Все равно показываем интерфейс, но используем только localStorage
                     currentStorage = 'local';
                     loadFiles();
                 });
             } else {
-                console.log('Неверные учетные данные');
                 showToast('❌ Неверный email или пароль', 'error');
             }
         }
@@ -694,12 +662,10 @@
                 currentUser = null;
                 syncCode = null;
                 files = [];
-                db = null; // Закрываем соединение с IndexedDB
+                db = null;
                 
                 document.getElementById('loginSection').style.display = 'block';
                 document.getElementById('mainSection').style.display = 'none';
-                
-                // Очищаем поля
                 document.getElementById('adminPassword').value = '';
                 
                 showToast('👋 Выход выполнен');
@@ -708,14 +674,11 @@
         
         // Инициализация хранилища
         async function initStorage() {
-            console.log('Инициализация хранилища...');
-            // Проверяем доступность IndexedDB
             if ('indexedDB' in window) {
-                console.log('IndexedDB поддерживается браузером');
                 try {
                     currentStorage = 'indexed';
                     await initIndexedDB();
-                    showToast('💾 Используется IndexedDB для хранения');
+                    showToast('💾 Используется IndexedDB для хранения (поддержка больших файлов)');
                     return Promise.resolve();
                 } catch (error) {
                     console.log('IndexedDB недоступен, используем localStorage:', error);
@@ -723,17 +686,15 @@
                     throw error;
                 }
             } else {
-                console.log('IndexedDB не поддерживается браузером');
                 currentStorage = 'local';
                 return Promise.reject('IndexedDB не поддерживается');
             }
         }
         
-        // Инициализация IndexedDB (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+        // Инициализация IndexedDB с поддержкой больших файлов
         function initIndexedDB() {
             return new Promise((resolve, reject) => {
-                console.log('Открытие IndexedDB...');
-                const request = indexedDB.open('AdminCloudStorage', 1);
+                const request = indexedDB.open('AdminCloudStorage', 2); // Увеличиваем версию для новой структуры
                 
                 request.onerror = (event) => {
                     console.error('IndexedDB ошибка:', event.target.error);
@@ -741,32 +702,32 @@
                 };
                 
                 request.onupgradeneeded = (event) => {
-                    console.log('Обновление базы данных...');
                     const db = event.target.result;
+                    
+                    // Старое хранилище (для небольших файлов)
                     if (!db.objectStoreNames.contains('files')) {
                         const store = db.createObjectStore('files', { keyPath: 'id' });
                         store.createIndex('syncCode', 'syncCode', { unique: false });
                         store.createIndex('timestamp', 'timestamp', { unique: false });
-                        console.log('Созданы объектные хранилища и индексы');
+                    }
+                    
+                    // Новое хранилище для больших файлов (чанки)
+                    if (!db.objectStoreNames.contains('fileChunks')) {
+                        const chunksStore = db.createObjectStore('fileChunks', { keyPath: ['fileId', 'chunkIndex'] });
+                        chunksStore.createIndex('fileId', 'fileId', { unique: false });
                     }
                 };
                 
                 request.onsuccess = (event) => {
                     db = event.target.result;
-                    console.log('IndexedDB успешно инициализирована');
-                    
-                    // Обработка ошибок при работе с базой данных
                     db.onerror = (event) => {
                         console.error('Ошибка базы данных:', event.target.error);
                     };
-                    
                     resolve();
                 };
                 
-                // Таймаут на случай если IndexedDB зависнет
                 setTimeout(() => {
                     if (request.readyState !== 'done') {
-                        console.log('Таймаут инициализации IndexedDB');
                         request.onerror = null;
                         reject('Таймаут инициализации IndexedDB');
                     }
@@ -779,18 +740,19 @@
             const uploadArea = document.getElementById('uploadArea');
             const fileInput = document.getElementById('fileInput');
             
-            // Клик по области загрузки
             uploadArea.addEventListener('click', () => {
-                fileInput.click();
+                if (!isUploading) {
+                    fileInput.click();
+                }
             });
             
-            // Обработка выбора файлов
             fileInput.addEventListener('change', handleFileSelect);
             
-            // Drag & drop события
             uploadArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
-                uploadArea.classList.add('dragover');
+                if (!isUploading) {
+                    uploadArea.classList.add('dragover');
+                }
             });
             
             uploadArea.addEventListener('dragleave', (e) => {
@@ -802,7 +764,7 @@
                 e.preventDefault();
                 uploadArea.classList.remove('dragover');
                 
-                if (e.dataTransfer.files.length > 0) {
+                if (!isUploading && e.dataTransfer.files.length > 0) {
                     handleFiles(e.dataTransfer.files);
                 }
             });
@@ -810,59 +772,159 @@
         
         // Обработка выбора файлов
         function handleFileSelect(e) {
-            if (e.target.files.length > 0) {
-                console.log('Выбрано файлов:', e.target.files.length);
+            if (!isUploading && e.target.files.length > 0) {
                 handleFiles(e.target.files);
-                // Сбрасываем значение input, чтобы можно было загрузить тот же файл снова
                 e.target.value = '';
             }
         }
         
-        // Обработка файлов
+        // Обработка файлов с проверкой размеров
         async function handleFiles(fileList) {
             if (!currentUser || !syncCode) {
                 showToast('⚠️ Сначала выполните вход', 'error');
                 return;
             }
             
+            if (isUploading) {
+                showToast('⚠️ Дождитесь окончания текущей загрузки', 'warning');
+                return;
+            }
+            
             console.log('Обработка', fileList.length, 'файлов...');
+            
+            // Проверяем общий размер
+            const totalCurrentSize = files.reduce((sum, file) => sum + file.size, 0);
+            const newFilesTotalSize = Array.from(fileList).reduce((sum, file) => sum + file.size, 0);
+            
+            if (totalCurrentSize + newFilesTotalSize > MAX_TOTAL_SIZE) {
+                showToast(`⚠️ Общий размер файлов превышает ${formatFileSize(MAX_TOTAL_SIZE)}`, 'error');
+                return;
+            }
+            
+            // Проверяем каждый файл
+            const oversizedFiles = Array.from(fileList).filter(file => file.size > MAX_FILE_SIZE);
+            if (oversizedFiles.length > 0) {
+                showToast(`⚠️ ${oversizedFiles.length} файлов превышают лимит ${formatFileSize(MAX_FILE_SIZE)}`, 'error');
+                return;
+            }
+            
+            // Запускаем загрузку
+            isUploading = true;
+            showUploadProgress(true);
+            
+            uploadProgress = {
+                currentFile: null,
+                totalFiles: fileList.length,
+                currentFileIndex: 0,
+                bytesUploaded: 0,
+                totalBytes: newFilesTotalSize,
+                startTime: Date.now(),
+                speedHistory: []
+            };
+            
             let uploadedCount = 0;
             let skippedCount = 0;
             
-            for (let file of fileList) {
-                // Проверяем размер файла (максимум 10 МБ)
-                if (file.size > 10 * 1024 * 1024) {
-                    showToast(`⚠️ Файл "${file.name}" слишком большой (>10 МБ)`, 'error');
-                    skippedCount++;
-                    continue;
-                }
+            // Обрабатываем файлы последовательно
+            for (let i = 0; i < fileList.length; i++) {
+                if (!isUploading) break;
+                
+                const file = fileList[i];
+                uploadProgress.currentFile = file;
+                uploadProgress.currentFileIndex = i + 1;
                 
                 try {
                     await saveFile(file);
                     uploadedCount++;
+                    
+                    // Обновляем прогресс
+                    uploadProgress.bytesUploaded += file.size;
+                    updateProgressDisplay();
+                    
                 } catch (error) {
                     console.error('Ошибка загрузки файла:', error);
-                    showToast(`⚠️ Ошибка загрузки "${file.name}"`, 'error');
                     skippedCount++;
                 }
             }
+            
+            // Завершаем загрузку
+            isUploading = false;
+            showUploadProgress(false);
             
             // Обновляем список файлов
             loadFiles();
             
             // Показываем результат
             if (uploadedCount > 0) {
-                showToast(`✅ Загружено ${uploadedCount} файлов`);
+                showToast(`✅ Загружено ${uploadedCount} файлов (${formatFileSize(uploadProgress.bytesUploaded)})`);
             }
             if (skippedCount > 0) {
                 showToast(`⚠️ Пропущено ${skippedCount} файлов`, 'error');
             }
         }
         
-        // Сохранение файла в хранилище
+        // Показать/скрыть прогресс бар
+        function showUploadProgress(show) {
+            const progressElement = document.getElementById('uploadProgress');
+            const uploadArea = document.getElementById('uploadArea');
+            
+            if (show) {
+                progressElement.style.display = 'block';
+                uploadArea.style.cursor = 'default';
+                uploadArea.querySelector('.upload-text').innerHTML = '<strong>Загрузка...</strong>';
+            } else {
+                progressElement.style.display = 'none';
+                uploadArea.style.cursor = 'pointer';
+                uploadArea.querySelector('.upload-text').innerHTML = '<strong>Перетащите файлы сюда</strong> или нажмите для выбора';
+            }
+        }
+        
+        // Обновить отображение прогресса
+        function updateProgressDisplay() {
+            const progress = uploadProgress;
+            const percentage = (progress.bytesUploaded / progress.totalBytes) * 100;
+            
+            document.getElementById('progressFill').style.width = percentage + '%';
+            
+            // Рассчитываем скорость
+            const elapsedTime = (Date.now() - progress.startTime) / 1000; // в секундах
+            const speed = progress.bytesUploaded / elapsedTime; // байт/сек
+            
+            // Добавляем в историю (скользящее среднее)
+            progress.speedHistory.push(speed);
+            if (progress.speedHistory.length > 10) {
+                progress.speedHistory.shift();
+            }
+            const avgSpeed = progress.speedHistory.reduce((a, b) => a + b, 0) / progress.speedHistory.length;
+            
+            // Рассчитываем оставшееся время
+            const remainingBytes = progress.totalBytes - progress.bytesUploaded;
+            const remainingTime = avgSpeed > 0 ? remainingBytes / avgSpeed : 0;
+            
+            // Форматируем текст
+            const speedText = formatFileSize(avgSpeed) + '/с';
+            const timeText = formatTime(remainingTime);
+            const fileText = `Файл ${progress.currentFileIndex}/${progress.totalFiles}: ${progress.currentFile?.name || ''}`;
+            
+            document.getElementById('progressText').textContent = 
+                `${percentage.toFixed(1)}% • ${speedText} • Осталось: ${timeText} • ${fileText}`;
+        }
+        
+        // Сохранение файла (с поддержкой чанков для больших файлов)
         async function saveFile(file) {
+            console.log('Сохранение файла:', file.name, 'размер:', formatFileSize(file.size));
+            
+            // Для файлов больше 100 МБ используем чанки
+            if (file.size > 100 * 1024 * 1024 && currentStorage === 'indexed') {
+                return saveFileWithChunks(file);
+            } else {
+                return saveFileAsWhole(file);
+            }
+        }
+        
+        // Сохранение файла целиком (для небольших файлов)
+        async function saveFileAsWhole(file) {
             return new Promise((resolve, reject) => {
-                console.log('Сохранение файла:', file.name);
                 const reader = new FileReader();
                 
                 reader.onload = async function(e) {
@@ -874,20 +936,16 @@
                         data: e.target.result,
                         timestamp: new Date().toISOString(),
                         syncCode: syncCode,
-                        owner: currentUser
+                        owner: currentUser,
+                        chunked: false
                     };
-                    
-                    console.log('Данные файла готовы, сохранение...');
                     
                     try {
                         if (currentStorage === 'indexed') {
-                            // Сохраняем в IndexedDB
                             await saveToIndexedDB(fileData);
                         } else {
-                            // Сохраняем в localStorage
                             saveToLocalStorage(fileData);
                         }
-                        console.log('Файл успешно сохранен:', file.name);
                         resolve();
                     } catch (error) {
                         reject(error);
@@ -899,48 +957,132 @@
             });
         }
         
-        // Сохранение в IndexedDB (ИСПРАВЛЕННАЯ ВЕРСИЯ)
-        function saveToIndexedDB(fileData) {
+        // Сохранение файла чанками (для больших файлов)
+        async function saveFileWithChunks(file) {
+            const fileId = generateFileId();
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            
+            console.log(`Сохранение файла чанками: ${totalChunks} чанков по ${formatFileSize(CHUNK_SIZE)}`);
+            
+            // Создаем метаданные файла
+            const fileMetadata = {
+                id: fileId,
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                timestamp: new Date().toISOString(),
+                syncCode: syncCode,
+                owner: currentUser,
+                chunked: true,
+                totalChunks: totalChunks,
+                chunkSize: CHUNK_SIZE
+            };
+            
+            // Сохраняем метаданные
+            if (currentStorage === 'indexed') {
+                await saveFileMetadata(fileMetadata);
+            } else {
+                // Для localStorage большие файлы не поддерживаем
+                throw new Error('Большие файлы поддерживаются только в IndexedDB');
+            }
+            
+            // Сохраняем чанки
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                if (!isUploading) {
+                    throw new Error('Загрузка отменена');
+                }
+                
+                const start = chunkIndex * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, file.size);
+                const chunk = file.slice(start, end);
+                
+                await saveFileChunk(fileId, chunkIndex, chunk, totalChunks);
+                
+                // Обновляем прогресс
+                uploadProgress.bytesUploaded += (end - start);
+                updateProgressDisplay();
+            }
+            
+            console.log('Файл успешно сохранен чанками:', file.name);
+        }
+        
+        // Сохранение метаданных файла
+        async function saveFileMetadata(metadata) {
             return new Promise((resolve, reject) => {
                 if (!db) {
                     reject('База данных не инициализирована');
                     return;
                 }
                 
-                try {
-                    const transaction = db.transaction(['files'], 'readwrite');
-                    const store = transaction.objectStore('files');
-                    
-                    const addRequest = store.add(fileData);
-                    
-                    addRequest.onsuccess = () => resolve();
-                    addRequest.onerror = (event) => {
-                        console.error('Ошибка сохранения в IndexedDB:', event.target.error);
-                        reject('Ошибка сохранения: ' + event.target.error);
-                    };
-                    
-                    transaction.onerror = (event) => {
-                        reject('Ошибка транзакции: ' + event.target.error);
-                    };
-                } catch (error) {
-                    reject('Ошибка доступа к IndexedDB: ' + error);
+                const transaction = db.transaction(['files'], 'readwrite');
+                const store = transaction.objectStore('files');
+                
+                const request = store.add(metadata);
+                
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject('Ошибка сохранения метаданных: ' + event.target.error);
+            });
+        }
+        
+        // Сохранение чанка файла
+        async function saveFileChunk(fileId, chunkIndex, chunk, totalChunks) {
+            return new Promise((resolve, reject) => {
+                if (!db) {
+                    reject('База данных не инициализирована');
+                    return;
                 }
+                
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    const chunkData = {
+                        fileId: fileId,
+                        chunkIndex: chunkIndex,
+                        data: e.target.result,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    const transaction = db.transaction(['fileChunks'], 'readwrite');
+                    const store = transaction.objectStore('fileChunks');
+                    
+                    const request = store.add(chunkData);
+                    
+                    request.onsuccess = () => {
+                        console.log(`Сохранен чанк ${chunkIndex + 1}/${totalChunks}`);
+                        resolve();
+                    };
+                    request.onerror = (event) => reject('Ошибка сохранения чанка: ' + event.target.error);
+                };
+                
+                reader.onerror = () => reject('Ошибка чтения чанка');
+                reader.readAsDataURL(chunk);
+            });
+        }
+        
+        // Сохранение в IndexedDB
+        async function saveToIndexedDB(fileData) {
+            return new Promise((resolve, reject) => {
+                if (!db) {
+                    reject('База данных не инициализирована');
+                    return;
+                }
+                
+                const transaction = db.transaction(['files'], 'readwrite');
+                const store = transaction.objectStore('files');
+                
+                const addRequest = store.add(fileData);
+                
+                addRequest.onsuccess = () => resolve();
+                addRequest.onerror = (event) => reject('Ошибка сохранения: ' + event.target.error);
             });
         }
         
         // Сохранение в localStorage
         function saveToLocalStorage(fileData) {
             try {
-                // Получаем текущий список файлов
                 let storedFiles = JSON.parse(localStorage.getItem(`cloud_files_${syncCode}`) || '[]');
-                
-                // Добавляем новый файл
                 storedFiles.push(fileData);
-                
-                // Сохраняем обратно
                 localStorage.setItem(`cloud_files_${syncCode}`, JSON.stringify(storedFiles));
-                
-                // Также сохраняем в общий список для быстрого доступа
                 updateFileIndex(fileData);
             } catch (error) {
                 console.error('Ошибка сохранения в localStorage:', error);
@@ -952,11 +1094,7 @@
         function updateFileIndex(fileData) {
             try {
                 let fileIndex = JSON.parse(localStorage.getItem('file_index') || '[]');
-                
-                // Удаляем старую запись если существует
                 fileIndex = fileIndex.filter(f => f.id !== fileData.id);
-                
-                // Добавляем новую
                 fileIndex.push({
                     id: fileData.id,
                     name: fileData.name,
@@ -964,7 +1102,6 @@
                     timestamp: fileData.timestamp,
                     syncCode: fileData.syncCode
                 });
-                
                 localStorage.setItem('file_index', JSON.stringify(fileIndex));
             } catch (error) {
                 console.error('Ошибка обновления индекса:', error);
@@ -973,12 +1110,8 @@
         
         // Загрузка файлов из хранилища
         async function loadFiles() {
-            if (!syncCode) {
-                console.log('Код синхронизации не установлен');
-                return;
-            }
+            if (!syncCode) return;
             
-            console.log('Загрузка файлов для кода:', syncCode);
             try {
                 if (currentStorage === 'indexed') {
                     await loadFromIndexedDB();
@@ -986,20 +1119,18 @@
                     loadFromLocalStorage();
                 }
                 
-                console.log('Загружено файлов:', files.length);
                 updateStats();
                 displayFiles();
             } catch (error) {
                 console.error('Ошибка загрузки файлов:', error);
                 showToast('⚠️ Ошибка загрузки файлов', 'error');
-                // Показываем пустой список
                 files = [];
                 displayFiles();
             }
         }
         
-        // Загрузка из IndexedDB (ИСПРАВЛЕННАЯ ВЕРСИЯ)
-        function loadFromIndexedDB() {
+        // Загрузка из IndexedDB (с поддержкой чанков)
+        async function loadFromIndexedDB() {
             return new Promise((resolve, reject) => {
                 if (!db) {
                     console.log('IndexedDB не инициализирована, используем localStorage');
@@ -1009,31 +1140,79 @@
                     return;
                 }
                 
-                try {
-                    const transaction = db.transaction(['files'], 'readonly');
-                    const store = transaction.objectStore('files');
-                    const index = store.index('syncCode');
+                const transaction = db.transaction(['files'], 'readonly');
+                const store = transaction.objectStore('files');
+                const index = store.index('syncCode');
+                
+                const getRequest = index.getAll(syncCode);
+                
+                getRequest.onsuccess = async () => {
+                    files = getRequest.result || [];
                     
-                    const getRequest = index.getAll(syncCode);
+                    // Для чанкованных файлов собираем данные
+                    for (let i = 0; i < files.length; i++) {
+                        if (files[i].chunked) {
+                            try {
+                                files[i].data = await assembleFileFromChunks(files[i].id, files[i].totalChunks);
+                            } catch (error) {
+                                console.error('Ошибка сборки файла из чанков:', error);
+                                files[i].data = null;
+                            }
+                        }
+                    }
                     
-                    getRequest.onsuccess = () => {
-                        files = getRequest.result || [];
-                        console.log('Загружено из IndexedDB:', files.length, 'файлов');
-                        resolve();
-                    };
-                    
-                    getRequest.onerror = (event) => {
-                        console.error('Ошибка загрузки из IndexedDB:', event.target.error);
-                        reject('Ошибка загрузки: ' + event.target.error);
-                    };
-                    
-                    transaction.onerror = (event) => {
-                        reject('Ошибка транзакции: ' + event.target.error);
-                    };
-                } catch (error) {
-                    console.error('Ошибка доступа к IndexedDB:', error);
-                    reject('Ошибка доступа: ' + error);
+                    console.log('Загружено файлов:', files.length);
+                    resolve();
+                };
+                
+                getRequest.onerror = (event) => reject('Ошибка загрузки: ' + event.target.error);
+            });
+        }
+        
+        // Сборка файла из чанков
+        async function assembleFileFromChunks(fileId, totalChunks) {
+            return new Promise((resolve, reject) => {
+                if (!db) {
+                    reject('База данных не инициализирована');
+                    return;
                 }
+                
+                const transaction = db.transaction(['fileChunks'], 'readonly');
+                const store = transaction.objectStore('fileChunks');
+                const index = store.index('fileId');
+                
+                const getRequest = index.getAll(fileId);
+                
+                getRequest.onsuccess = () => {
+                    const chunks = getRequest.result || [];
+                    
+                    if (chunks.length !== totalChunks) {
+                        reject(`Не все чанки найдены. Ожидалось: ${totalChunks}, найдено: ${chunks.length}`);
+                        return;
+                    }
+                    
+                    // Сортируем чанки по индексу
+                    chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+                    
+                    // Собираем данные
+                    let dataString = '';
+                    chunks.forEach(chunk => {
+                        // Убираем префикс data: URL
+                        const commaIndex = chunk.data.indexOf(',');
+                        if (commaIndex !== -1) {
+                            dataString += chunk.data.substring(commaIndex + 1);
+                        }
+                    });
+                    
+                    // Собираем полный data URL (берем префикс из первого чанка)
+                    const firstChunk = chunks[0];
+                    const commaIndex = firstChunk.data.indexOf(',');
+                    const prefix = firstChunk.data.substring(0, commaIndex + 1);
+                    
+                    resolve(prefix + dataString);
+                };
+                
+                getRequest.onerror = (event) => reject('Ошибка загрузки чанков: ' + event.target.error);
             });
         }
         
@@ -1042,7 +1221,6 @@
             try {
                 const storedData = localStorage.getItem(`cloud_files_${syncCode}`);
                 files = storedData ? JSON.parse(storedData) : [];
-                console.log('Загружено из localStorage:', files.length, 'файлов');
             } catch (error) {
                 console.error('Ошибка загрузки из localStorage:', error);
                 files = [];
@@ -1051,14 +1229,11 @@
         
         // Обновление статистики
         function updateStats() {
-            // Общее количество файлов
             document.getElementById('totalFiles').textContent = files.length;
             
-            // Общий размер
             const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0);
             document.getElementById('totalSize').textContent = formatFileSize(totalSize);
             
-            // Время последней синхронизации
             if (files.length > 0) {
                 const latest = files.reduce((latest, file) => {
                     const currentTime = new Date(file.timestamp || 0).getTime();
@@ -1095,7 +1270,6 @@
                 return;
             }
             
-            // Сортируем по дате (новые сверху)
             const sortedFiles = [...files].sort((a, b) => {
                 const timeA = new Date(a.timestamp || 0).getTime();
                 const timeB = new Date(b.timestamp || 0).getTime();
@@ -1105,19 +1279,20 @@
             filesList.innerHTML = sortedFiles.map(file => {
                 const safeId = (file.id || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                 const safeName = (file.name || 'Без имени').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                const chunkedBadge = file.chunked ? ' <span style="color:#00ff88; font-size:10px;">[чанки]</span>' : '';
                 
                 return `
                 <div class="file-item">
                     <div class="file-icon">${getFileIcon(file.name)}</div>
                     <div class="file-info">
-                        <div class="file-name">${safeName}</div>
+                        <div class="file-name">${safeName}${chunkedBadge}</div>
                         <div class="file-size">
                             ${formatFileSize(file.size || 0)} • 
                             ${file.timestamp ? new Date(file.timestamp).toLocaleDateString('ru-RU') : 'Нет даты'}
                         </div>
                     </div>
                     <div class="file-actions">
-                        <button class="action-btn" onclick="downloadFile('${safeId}')" title="Скачать">
+                        <button class="action-btn" onclick="downloadFile('${safeId}')" title="Скачать" ${!file.data ? 'disabled' : ''}>
                             ⬇️
                         </button>
                         <button class="action-btn delete" onclick="deleteFile('${safeId}')" title="Удалить">
@@ -1130,7 +1305,7 @@
         }
         
         // Скачивание файла
-        function downloadFile(fileId) {
+        async function downloadFile(fileId) {
             const file = files.find(f => f.id === fileId);
             if (!file) {
                 showToast('Файл не найден', 'error');
@@ -1138,12 +1313,23 @@
             }
             
             if (!file.data) {
-                showToast('Ошибка: данные файла отсутствуют', 'error');
-                return;
+                showToast('⚠️ Загружаем файл...', 'warning');
+                
+                // Для чанкованных файлов собираем данные перед скачиванием
+                if (file.chunked && currentStorage === 'indexed') {
+                    try {
+                        file.data = await assembleFileFromChunks(file.id, file.totalChunks);
+                    } catch (error) {
+                        showToast('❌ Ошибка сборки файла для скачивания', 'error');
+                        return;
+                    }
+                } else {
+                    showToast('❌ Данные файла отсутствуют', 'error');
+                    return;
+                }
             }
             
             try {
-                // Создаем ссылку для скачивания
                 const link = document.createElement('a');
                 link.href = file.data;
                 link.download = file.name || 'download';
@@ -1171,7 +1357,6 @@
                     deleteFromLocalStorage(fileId);
                 }
                 
-                // Обновляем список файлов
                 files = files.filter(f => f.id !== fileId);
                 updateStats();
                 displayFiles();
@@ -1183,38 +1368,48 @@
             }
         }
         
-        // Удаление из IndexedDB
-        function deleteFromIndexedDB(fileId) {
+        // Удаление из IndexedDB (с чанками)
+        async function deleteFromIndexedDB(fileId) {
+            const file = files.find(f => f.id === fileId);
+            if (!file) return;
+            
             return new Promise((resolve, reject) => {
                 if (!db) {
                     reject('База данных не инициализирована');
                     return;
                 }
                 
-                try {
-                    const transaction = db.transaction(['files'], 'readwrite');
-                    const store = transaction.objectStore('files');
+                // Удаляем метаданные файла
+                const transaction = db.transaction(['files', 'fileChunks'], 'readwrite');
+                const filesStore = transaction.objectStore('files');
+                const chunksStore = transaction.objectStore('fileChunks');
+                
+                const deleteRequest = filesStore.delete(fileId);
+                
+                // Удаляем чанки если файл был чанкован
+                if (file.chunked) {
+                    const chunksIndex = chunksStore.index('fileId');
+                    const getChunksRequest = chunksIndex.getAll(fileId);
                     
-                    const deleteRequest = store.delete(fileId);
-                    
-                    deleteRequest.onsuccess = () => resolve();
-                    deleteRequest.onerror = (event) => {
-                        reject('Ошибка удаления: ' + event.target.error);
+                    getChunksRequest.onsuccess = () => {
+                        const chunks = getChunksRequest.result || [];
+                        chunks.forEach(chunk => {
+                            chunksStore.delete([fileId, chunk.chunkIndex]);
+                        });
                     };
-                } catch (error) {
-                    reject('Ошибка доступа к IndexedDB: ' + error);
                 }
+                
+                deleteRequest.onsuccess = () => resolve();
+                deleteRequest.onerror = (event) => reject('Ошибка удаления: ' + event.target.error);
             });
         }
         
         // Удаление из localStorage
         function deleteFromLocalStorage(fileId) {
             try {
-                // Удаляем из основного списка
                 files = files.filter(f => f.id !== fileId);
                 localStorage.setItem(`cloud_files_${syncCode}`, JSON.stringify(files));
                 
-                // Удаляем из индекса
                 let fileIndex = JSON.parse(localStorage.getItem('file_index') || '[]');
                 fileIndex = fileIndex.filter(f => f.id !== fileId);
                 localStorage.setItem('file_index', JSON.stringify(fileIndex));
@@ -1254,27 +1449,38 @@
                     return;
                 }
                 
-                try {
-                    const transaction = db.transaction(['files'], 'readwrite');
-                    const store = transaction.objectStore('files');
-                    const index = store.index('syncCode');
+                const transaction = db.transaction(['files', 'fileChunks'], 'readwrite');
+                const filesStore = transaction.objectStore('files');
+                const chunksStore = transaction.objectStore('fileChunks');
+                const index = filesStore.index('syncCode');
+                
+                const getRequest = index.getAll(syncCode);
+                
+                getRequest.onsuccess = () => {
+                    const filesToDelete = getRequest.result || [];
                     
-                    const getRequest = index.getAll(syncCode);
+                    // Удаляем метаданные файлов
+                    filesToDelete.forEach(file => {
+                        filesStore.delete(file.id);
+                        
+                        // Удаляем чанки если файл был чанкован
+                        if (file.chunked) {
+                            const chunksIndex = chunksStore.index('fileId');
+                            const getChunksRequest = chunksIndex.getAll(file.id);
+                            
+                            getChunksRequest.onsuccess = () => {
+                                const chunks = getChunksRequest.result || [];
+                                chunks.forEach(chunk => {
+                                    chunksStore.delete([file.id, chunk.chunkIndex]);
+                                });
+                            };
+                        }
+                    });
                     
-                    getRequest.onsuccess = () => {
-                        const filesToDelete = getRequest.result || [];
-                        filesToDelete.forEach(file => {
-                            store.delete(file.id);
-                        });
-                        resolve();
-                    };
-                    
-                    getRequest.onerror = (event) => {
-                        reject('Ошибка получения файлов: ' + event.target.error);
-                    };
-                } catch (error) {
-                    reject('Ошибка доступа к IndexedDB: ' + error);
-                }
+                    resolve();
+                };
+                
+                getRequest.onerror = (event) => reject('Ошибка получения файлов: ' + event.target.error);
             });
         }
         
@@ -1283,7 +1489,6 @@
             try {
                 localStorage.removeItem(`cloud_files_${syncCode}`);
                 
-                // Обновляем индекс
                 let fileIndex = JSON.parse(localStorage.getItem('file_index') || '[]');
                 fileIndex = fileIndex.filter(f => f.syncCode !== syncCode);
                 localStorage.setItem('file_index', JSON.stringify(fileIndex));
@@ -1311,7 +1516,6 @@
             
             showToast('🔗 Ссылка для общего доступа создана');
             
-            // Копируем в буфер обмена
             try {
                 navigator.clipboard.writeText(shareUrl).then(() => {
                     setTimeout(() => showToast('📋 Ссылка скопирована в буфер'), 500);
@@ -1363,16 +1567,33 @@
             const sizes = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            const size = bytes / Math.pow(k, i);
+            
+            if (i === 0) {
+                return Math.round(size) + ' ' + sizes[i];
+            } else {
+                return size.toFixed(2) + ' ' + sizes[i];
+            }
+        }
+        
+        function formatTime(seconds) {
+            if (seconds < 60) {
+                return Math.round(seconds) + 'с';
+            } else if (seconds < 3600) {
+                return Math.round(seconds / 60) + 'м';
+            } else {
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.round((seconds % 3600) / 60);
+                return hours + 'ч ' + minutes + 'м';
+            }
         }
         
         function showToast(message, type = 'success') {
-            // Удаляем старый тост если есть
             const oldToast = document.querySelector('.toast');
             if (oldToast) oldToast.remove();
             
             const toast = document.createElement('div');
-            toast.className = `toast ${type === 'error' ? 'error' : ''}`;
+            toast.className = `toast ${type === 'error' ? 'error' : type === 'warning' ? 'warning' : ''}`;
             toast.textContent = message;
             
             document.body.appendChild(toast);
@@ -1382,51 +1603,6 @@
                     toast.remove();
                 }
             }, 3000);
-        }
-        
-        // Экспорт файлов для скачивания на другое устройство
-        async function exportAllFiles() {
-            if (files.length === 0) {
-                showToast('Нет файлов для экспорта', 'error');
-                return;
-            }
-            
-            try {
-                // Создаем архивный объект с метаданными
-                const exportData = {
-                    version: '1.0',
-                    timestamp: new Date().toISOString(),
-                    syncCode: syncCode,
-                    owner: currentUser,
-                    files: files.map(f => ({
-                        id: f.id,
-                        name: f.name,
-                        type: f.type,
-                        size: f.size,
-                        timestamp: f.timestamp
-                    }))
-                };
-                
-                // Создаем и скачиваем JSON файл с метаданными
-                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `cloud-backup-${syncCode}-${new Date().toISOString().split('T')[0]}.json`;
-                link.style.display = 'none';
-                
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                
-                URL.revokeObjectURL(url);
-                
-                showToast('📦 Резервная копия метаданных создана');
-            } catch (error) {
-                console.error('Ошибка экспорта:', error);
-                showToast('❌ Ошибка создания резервной копии', 'error');
-            }
         }
         
         // Проверка URL на наличие параметров общего доступа
@@ -1439,10 +1615,9 @@
                 const viewCode = params.get('view');
                 
                 if (viewCode) {
-                    // Режим просмотра для общего доступа
                     document.getElementById('adminEmail').value = 'guest@viewer';
                     document.getElementById('syncCode').value = viewCode;
-                    document.getElementById('adminPassword').value = ADMIN_PASSWORD; // Автозаполнение пароля
+                    document.getElementById('adminPassword').value = ADMIN_PASSWORD;
                     showToast('🔗 Обнаружен код общего доступа', 'error');
                 }
             } catch (error) {
@@ -1450,68 +1625,13 @@
             }
         }
         
-        // Горячие клавиши
-        document.addEventListener('keydown', (e) => {
-            // Ctrl+S - сохранить/обновить
-            if (e.ctrlKey && e.key === 's') {
+        // Отмена загрузки при закрытии страницы
+        window.addEventListener('beforeunload', function(e) {
+            if (isUploading) {
                 e.preventDefault();
-                refreshFiles();
-            }
-            
-            // Ctrl+E - экспорт
-            if (e.ctrlKey && e.key === 'e') {
-                e.preventDefault();
-                exportAllFiles();
-            }
-            
-            // Ctrl+L - выход
-            if (e.ctrlKey && e.key === 'l') {
-                e.preventDefault();
-                logout();
+                e.returnValue = 'Идет загрузка файлов. Вы уверены, что хотите уйти?';
             }
         });
-        
-        // Резервный механизм на случай ошибки IndexedDB
-        function fallbackToLocalStorage() {
-            console.log('Переключение на localStorage из-за ошибки IndexedDB');
-            currentStorage = 'local';
-            
-            if (syncCode) {
-                loadFiles();
-            }
-        }
-        
-        // Обработка неожиданных ошибок
-        window.addEventListener('error', function(event) {
-            console.error('Глобальная ошибка:', event.error);
-            
-            // Если ошибка связана с IndexedDB, переключаемся на localStorage
-            if (event.message && event.message.includes('IndexedDB')) {
-                fallbackToLocalStorage();
-            }
-        });
-        
-        window.addEventListener('unhandledrejection', function(event) {
-            console.error('Необработанная ошибка Promise:', event.reason);
-        });
-        
-        // Функция для тестирования
-        function testSystem() {
-            console.log('=== ТЕСТ СИСТЕМЫ ===');
-            console.log('1. Проверка localStorage:', typeof localStorage !== 'undefined');
-            console.log('2. Проверка IndexedDB:', typeof indexedDB !== 'undefined');
-            console.log('3. Проверка FileReader:', typeof FileReader !== 'undefined');
-            console.log('4. Проверка Blob:', typeof Blob !== 'undefined');
-            console.log('5. Текущий пользователь:', currentUser);
-            console.log('6. Код синхронизации:', syncCode);
-            console.log('7. Тип хранилища:', currentStorage);
-            console.log('8. Файлов в памяти:', files.length);
-            console.log('9. localStorage ключи:', Object.keys(localStorage));
-            console.log('=== КОНЕЦ ТЕСТА ===');
-        }
-        
-        // Автоматический тест при загрузке
-        setTimeout(testSystem, 1000);
     </script>
 </body>
 </html>
